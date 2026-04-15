@@ -1,0 +1,561 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>TCP Monitor</title>
+<script src="/socket.io/socket.io.js"></script>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600;700&family=Syne:wght@700;800&display=swap');
+
+  :root {
+    --bg:       #0a0c10;
+    --surface:  #111520;
+    --border:   #1e2535;
+    --accent:   #00e5ff;
+    --accent2:  #7c3aed;
+    --green:    #22c55e;
+    --red:      #ef4444;
+    --yellow:   #f59e0b;
+    --text:     #e2e8f0;
+    --muted:    #4a5568;
+    --mono:     'JetBrains Mono', monospace;
+    --sans:     'Syne', sans-serif;
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--mono);
+    min-height: 100vh;
+    overflow-x: hidden;
+  }
+
+  /* ── grid bg ── */
+  body::before {
+    content: '';
+    position: fixed; inset: 0;
+    background-image:
+      linear-gradient(rgba(0,229,255,.03) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(0,229,255,.03) 1px, transparent 1px);
+    background-size: 40px 40px;
+    pointer-events: none;
+    z-index: 0;
+  }
+
+  /* ── header ── */
+  header {
+    position: sticky; top: 0; z-index: 100;
+    background: rgba(10,12,16,.9);
+    backdrop-filter: blur(12px);
+    border-bottom: 1px solid var(--border);
+    padding: 0 24px;
+    height: 56px;
+    display: flex; align-items: center; gap: 20px;
+  }
+
+  .logo {
+    font-family: var(--sans);
+    font-size: 18px;
+    font-weight: 800;
+    color: var(--accent);
+    letter-spacing: -.5px;
+    display: flex; align-items: center; gap: 8px;
+  }
+  .logo .dot {
+    width: 8px; height: 8px;
+    background: var(--accent);
+    border-radius: 50%;
+    animation: pulse 2s infinite;
+  }
+  @keyframes pulse {
+    0%,100% { box-shadow: 0 0 0 0 rgba(0,229,255,.5); }
+    50%      { box-shadow: 0 0 0 6px rgba(0,229,255,0); }
+  }
+
+  .stats {
+    margin-left: auto;
+    display: flex; gap: 16px;
+  }
+  .stat-pill {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 4px 12px;
+    font-size: 12px;
+    display: flex; align-items: center; gap: 6px;
+  }
+  .stat-pill .val {
+    font-weight: 700;
+    color: var(--accent);
+  }
+
+  .btn-clear {
+    background: transparent;
+    border: 1px solid var(--red);
+    color: var(--red);
+    border-radius: 6px;
+    padding: 5px 14px;
+    font-family: var(--mono);
+    font-size: 12px;
+    cursor: pointer;
+    transition: all .2s;
+  }
+  .btn-clear:hover { background: var(--red); color: #fff; }
+
+  /* ── main layout ── */
+  main {
+    position: relative; z-index: 1;
+    max-width: 1400px;
+    margin: 0 auto;
+    padding: 24px;
+    display: grid;
+    grid-template-columns: 260px 1fr;
+    gap: 20px;
+  }
+
+  /* ── sidebar ── */
+  aside {
+    display: flex; flex-direction: column; gap: 16px;
+  }
+
+  .card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 16px;
+  }
+  .card-title {
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 2px;
+    text-transform: uppercase;
+    color: var(--muted);
+    margin-bottom: 14px;
+  }
+
+  /* connection list */
+  #conn-list { display: flex; flex-direction: column; gap: 8px; }
+  .conn-item {
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 10px 12px;
+    font-size: 12px;
+    display: flex; align-items: center; gap: 8px;
+    animation: slideIn .3s ease;
+  }
+  .conn-dot {
+    width: 7px; height: 7px; border-radius: 50%;
+    flex-shrink: 0;
+  }
+  .conn-dot.alive { background: var(--green); box-shadow: 0 0 6px var(--green); }
+  .conn-dot.dead  { background: var(--muted); }
+
+  /* counter cards */
+  .big-num {
+    font-family: var(--sans);
+    font-size: 40px;
+    font-weight: 800;
+    color: var(--accent);
+    line-height: 1;
+  }
+  .big-label { font-size: 11px; color: var(--muted); margin-top: 4px; }
+
+  /* ── log panel ── */
+  .log-panel {
+    display: flex; flex-direction: column;
+  }
+  .log-toolbar {
+    display: flex; align-items: center; gap: 10px;
+    margin-bottom: 12px;
+  }
+  .log-toolbar .label {
+    font-size: 10px; letter-spacing: 2px;
+    text-transform: uppercase; color: var(--muted);
+    margin-right: auto;
+  }
+
+  .filter-input {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    color: var(--text);
+    font-family: var(--mono);
+    font-size: 12px;
+    padding: 5px 12px;
+    width: 220px;
+    outline: none;
+    transition: border-color .2s;
+  }
+  .filter-input:focus { border-color: var(--accent); }
+
+  .autoscroll-toggle {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 5px 12px;
+    font-family: var(--mono);
+    font-size: 12px;
+    color: var(--text);
+    cursor: pointer;
+    transition: all .2s;
+    display: flex; align-items: center; gap: 6px;
+  }
+  .autoscroll-toggle.on  { border-color: var(--green); color: var(--green); }
+  .autoscroll-toggle.off { border-color: var(--muted); color: var(--muted); }
+
+  /* ── log table ── */
+  .log-scroll {
+    flex: 1;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    overflow-y: auto;
+    max-height: calc(100vh - 170px);
+    scrollbar-width: thin;
+    scrollbar-color: var(--border) transparent;
+  }
+
+  table { width: 100%; border-collapse: collapse; }
+  thead th {
+    position: sticky; top: 0;
+    background: var(--surface);
+    padding: 10px 14px;
+    text-align: left;
+    font-size: 10px;
+    letter-spacing: 1.5px;
+    text-transform: uppercase;
+    color: var(--muted);
+    border-bottom: 1px solid var(--border);
+    font-weight: 600;
+  }
+
+  tbody tr {
+    border-bottom: 1px solid rgba(30,37,53,.6);
+    animation: fadeRow .25s ease;
+    transition: background .15s;
+  }
+  tbody tr:hover { background: rgba(0,229,255,.03); }
+  tbody tr.new-flash { background: rgba(0,229,255,.07); }
+
+  @keyframes fadeRow {
+    from { opacity: 0; transform: translateY(-4px); }
+    to   { opacity: 1; transform: translateY(0); }
+  }
+  @keyframes slideIn {
+    from { opacity: 0; transform: translateX(-8px); }
+    to   { opacity: 1; transform: translateX(0); }
+  }
+
+  td {
+    padding: 10px 14px;
+    font-size: 12px;
+    vertical-align: middle;
+    white-space: nowrap;
+  }
+
+  .td-id     { color: var(--muted); width: 48px; }
+  .td-time   { color: var(--muted); width: 170px; }
+  .td-ip     { color: var(--yellow); width: 160px; }
+  .td-raw    { color: var(--text); white-space: pre-wrap; word-break: break-all; max-width: 600px; }
+
+  .tag-at     { color: var(--accent); font-weight: 700; }
+  .tag-ok     { color: var(--green); }
+  .tag-err    { color: var(--red); }
+  .tag-cipopen { color: var(--accent2); font-weight: 600; }
+
+  .empty-state {
+    text-align: center;
+    padding: 60px 20px;
+    color: var(--muted);
+  }
+  .empty-state .icon { font-size: 40px; margin-bottom: 12px; }
+  .empty-state p { font-size: 13px; }
+
+  /* ── toast ── */
+  #toast {
+    position: fixed; bottom: 24px; right: 24px; z-index: 999;
+    display: flex; flex-direction: column; gap: 8px;
+  }
+  .toast-msg {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-left: 3px solid var(--accent);
+    border-radius: 8px;
+    padding: 10px 16px;
+    font-size: 12px;
+    animation: toastIn .3s ease, toastOut .3s ease 2.7s forwards;
+  }
+  .toast-msg.disconnect { border-left-color: var(--red); }
+  @keyframes toastIn {
+    from { opacity: 0; transform: translateX(20px); }
+    to   { opacity: 1; transform: translateX(0); }
+  }
+  @keyframes toastOut {
+    to { opacity: 0; transform: translateX(20px); }
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="logo">
+    <div class="dot"></div>
+    TCP MONITOR
+  </div>
+
+  <div class="stats">
+    <div class="stat-pill">Messages <span class="val" id="stat-msgs">0</span></div>
+    <div class="stat-pill">Connections <span class="val" id="stat-conns">0</span></div>
+  </div>
+
+  <button class="btn-clear" onclick="clearLogs()">✕ Clear</button>
+</header>
+
+<main>
+  <aside>
+    <!-- counters -->
+    <div class="card">
+      <div class="card-title">Total Messages</div>
+      <div class="big-num" id="big-msgs">0</div>
+      <div class="big-label">received since start</div>
+    </div>
+
+    <div class="card">
+      <div class="card-title">Active Connections</div>
+      <div id="conn-list">
+        <div style="color:var(--muted);font-size:12px;">No connections yet</div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-title">Server Info</div>
+      <div style="font-size:12px;line-height:2;color:var(--muted)">
+        TCP Port <span style="color:var(--accent)">9000</span><br>
+        Web Port <span style="color:var(--accent)">3000</span><br>
+        Protocol <span style="color:var(--text)">TCP/IP</span><br>
+        Encoding <span style="color:var(--text)">UTF-8</span>
+      </div>
+    </div>
+  </aside>
+
+  <div class="log-panel">
+    <div class="log-toolbar">
+      <span class="label">Message Log</span>
+      <input class="filter-input" id="filter" placeholder="🔍  Filter messages..." oninput="applyFilter()" />
+      <button class="autoscroll-toggle on" id="scroll-btn" onclick="toggleScroll()">
+        ↓ Auto-scroll
+      </button>
+    </div>
+
+    <div class="log-scroll" id="log-scroll">
+      <table>
+        <thead>
+          <tr>
+            <th>#</th>
+            <th>Time</th>
+            <th>Client</th>
+            <th>Message</th>
+          </tr>
+        </thead>
+        <tbody id="log-body">
+          <tr id="empty-row">
+            <td colspan="4">
+              <div class="empty-state">
+                <div class="icon">📡</div>
+                <p>Waiting for TCP connections on port <strong>9000</strong></p>
+              </div>
+            </td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+</main>
+
+<div id="toast"></div>
+
+<script>
+const socket = io();
+
+let totalMsgs   = 0;
+let totalConns  = 0;
+let autoScroll  = true;
+let filterText  = "";
+let allRows     = []; // { id, timestamp, clientIp, clientPort, raw }
+
+// ── helpers ────────────────────────────────────────────────────────────────
+function formatTime(iso) {
+  const d = new Date(iso);
+  return d.toLocaleTimeString("en-GB", { hour12: false }) +
+         "." + String(d.getMilliseconds()).padStart(3,"0");
+}
+
+function highlightRaw(raw) {
+  return raw
+    .replace(/(AT\+\w+)/g,         '<span class="tag-at">$1</span>')
+    .replace(/(\+CIPOPEN:)/g,       '<span class="tag-cipopen">$1</span>')
+    .replace(/(OK)/g,               '<span class="tag-ok">$1</span>')
+    .replace(/(ERROR)/g,            '<span class="tag-err">$1</span>');
+}
+
+function buildRow(entry) {
+  const tr = document.createElement("tr");
+  tr.dataset.id  = entry.id;
+  tr.dataset.raw = entry.raw.toLowerCase();
+  tr.dataset.ip  = entry.clientIp.toLowerCase();
+  tr.innerHTML = `
+    <td class="td-id">${entry.id}</td>
+    <td class="td-time">${formatTime(entry.timestamp)}</td>
+    <td class="td-ip">${entry.clientIp}:${entry.clientPort}</td>
+    <td class="td-raw">${highlightRaw(entry.raw)}</td>
+  `;
+  return tr;
+}
+
+function applyFilter() {
+  filterText = document.getElementById("filter").value.toLowerCase();
+  const rows = document.querySelectorAll("#log-body tr[data-id]");
+  rows.forEach(tr => {
+    const match = !filterText ||
+      tr.dataset.raw.includes(filterText) ||
+      tr.dataset.ip.includes(filterText);
+    tr.style.display = match ? "" : "none";
+  });
+}
+
+function scrollBottom() {
+  const el = document.getElementById("log-scroll");
+  el.scrollTop = el.scrollTop; // force reflow
+  requestAnimationFrame(() => { el.scrollTop = el.scrollHeight; });
+}
+
+function toggleScroll() {
+  autoScroll = !autoScroll;
+  const btn = document.getElementById("scroll-btn");
+  btn.textContent = autoScroll ? "↓ Auto-scroll" : "↕ Manual";
+  btn.className = "autoscroll-toggle " + (autoScroll ? "on" : "off");
+}
+
+function updateCounters() {
+  document.getElementById("stat-msgs").textContent  = totalMsgs;
+  document.getElementById("big-msgs").textContent   = totalMsgs;
+  document.getElementById("stat-conns").textContent = totalConns;
+}
+
+function toast(msg, type = "") {
+  const t = document.getElementById("toast");
+  const div = document.createElement("div");
+  div.className = "toast-msg " + type;
+  div.textContent = msg;
+  t.appendChild(div);
+  setTimeout(() => div.remove(), 3200);
+}
+
+// ── connection tracking ─────────────────────────────────────────────────────
+const activeConns = {};
+
+function renderConnList() {
+  const el = document.getElementById("conn-list");
+  const keys = Object.keys(activeConns);
+  if (!keys.length) {
+    el.innerHTML = '<div style="color:var(--muted);font-size:12px;">No connections yet</div>';
+    return;
+  }
+  el.innerHTML = keys.map(k => {
+    const c = activeConns[k];
+    return `<div class="conn-item">
+      <div class="conn-dot ${c.alive ? 'alive' : 'dead'}"></div>
+      <div>
+        <div>${c.ip}:${c.port}</div>
+        <div style="font-size:10px;color:var(--muted)">${formatTime(c.connectedAt)}</div>
+      </div>
+    </div>`;
+  }).join("");
+}
+
+// ── socket events ───────────────────────────────────────────────────────────
+socket.on("init", ({ logs }) => {
+  // Populate with existing logs (reversed — newest first in array)
+  const reversed = [...logs].reverse();
+  reversed.forEach(entry => addRow(entry, false));
+  totalMsgs = logs.length;
+  updateCounters();
+  if (autoScroll) scrollBottom();
+});
+
+socket.on("tcp_connect", ({ clientIp, clientPort, timestamp }) => {
+  totalConns++;
+  const key = `${clientIp}:${clientPort}`;
+  activeConns[key] = { ip: clientIp, port: clientPort, alive: true, connectedAt: timestamp };
+  renderConnList();
+  updateCounters();
+  toast(`🔗 Connected: ${key}`);
+});
+
+socket.on("tcp_disconnect", ({ clientIp, clientPort }) => {
+  const key = `${clientIp}:${clientPort}`;
+  if (activeConns[key]) {
+    activeConns[key].alive = false;
+    renderConnList();
+  }
+  toast(`🔌 Disconnected: ${key}`, "disconnect");
+});
+
+socket.on("tcp_message", (entry) => {
+  totalMsgs++;
+  updateCounters();
+  addRow(entry, true);
+});
+
+socket.on("logs_cleared", () => {
+  document.getElementById("log-body").innerHTML = `
+    <tr id="empty-row"><td colspan="4">
+      <div class="empty-state">
+        <div class="icon">📡</div>
+        <p>Waiting for TCP connections on port <strong>9000</strong></p>
+      </div>
+    </td></tr>`;
+  totalMsgs = 0;
+  updateCounters();
+  toast("🗑 Logs cleared");
+});
+
+function addRow(entry, isNew) {
+  const body = document.getElementById("log-body");
+  const empty = document.getElementById("empty-row");
+  if (empty) empty.remove();
+
+  const tr = buildRow(entry);
+
+  // filter visibility
+  if (filterText) {
+    const match = tr.dataset.raw.includes(filterText) || tr.dataset.ip.includes(filterText);
+    if (!match) tr.style.display = "none";
+  }
+
+  // insert at top
+  body.insertBefore(tr, body.firstChild);
+
+  if (isNew) {
+    tr.classList.add("new-flash");
+    setTimeout(() => tr.classList.remove("new-flash"), 600);
+  }
+
+  // keep table at most 500 rows
+  const rows = body.querySelectorAll("tr[data-id]");
+  if (rows.length > 500) rows[rows.length - 1].remove();
+
+  if (autoScroll) scrollBottom();
+}
+
+// ── clear ───────────────────────────────────────────────────────────────────
+async function clearLogs() {
+  await fetch("/api/logs", { method: "DELETE" });
+}
+</script>
+</body>
+</html>
